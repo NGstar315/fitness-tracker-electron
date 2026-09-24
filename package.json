@@ -1,0 +1,37 @@
+{
+  "name": "fitness-tracker",
+  "version": "0.1.0",
+  "description": "Local-first home gym, nutrition, and body tracking companion.",
+  "main": "out/main/index.js",
+  "license": "MIT",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "package:win": "npm run build && electron-builder --win nsis portable"
+  },
+  "dependencies": {
+    "better-sqlite3": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "zod": "latest",
+    "drizzle-orm": "latest"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "electron-builder": "latest",
+    "typescript": "latest",
+    "vite": "latest",
+    "vitest": "latest",
+    "drizzle-kit": "latest",
+    "@vitejs/plugin-react": "latest",
+    "electron": "latest",
+    "electron-vite": "latest"
+  }
+}

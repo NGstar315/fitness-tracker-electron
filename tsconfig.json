@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "jsx": "react-jsx",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noUncheckedIndexedAccess": true,
+    "baseUrl": ".",
+    "paths": {
+      "@shared/*": [
+        "src/types/*"
+      ],
+      "@renderer/*": [
+        "src/*"
+      ]
+    },
+    "ignoreDeprecations": "6.0"
+  },
+  "include": [
+    "electron",
+    "src",
+    "tests",
+    "electron.vite.config.ts",
+    "vite.config.ts",
+    "vitest.config.ts"
+  ]
+}
