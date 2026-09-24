@@ -1,0 +1,69 @@
+import Database from 'better-sqlite3';
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+
+const INITIAL_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS user_profile (id TEXT PRIMARY KEY, name TEXT, height_cm REAL NOT NULL, current_weight_kg REAL, primary_goal TEXT NOT NULL, protein_target_g REAL NOT NULL, target_calories_kcal REAL, sleep_target_hours REAL NOT NULL, timezone TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS equipment (id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL, min_weight_kg REAL, max_weight_kg REAL, step_kg REAL, notes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS equipment_name_idx ON equipment(name);
+`;
+
+const CORE_DOMAIN_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS exercise (id TEXT PRIMARY KEY, name TEXT NOT NULL, slug TEXT NOT NULL UNIQUE, category TEXT NOT NULL, primary_muscles TEXT NOT NULL, secondary_muscles TEXT NOT NULL DEFAULT '[]', equipment_type TEXT NOT NULL, instructions TEXT, common_mistakes TEXT, beginner_regression TEXT, progression_rule TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS workout_plan (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, weekly_frequency INTEGER NOT NULL, active_from TEXT NOT NULL, active_to TEXT, status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS workout_plan_day (id TEXT PRIMARY KEY, plan_id TEXT NOT NULL REFERENCES workout_plan(id), weekday INTEGER NOT NULL, name TEXT NOT NULL, order_index INTEGER NOT NULL, notes TEXT);
+CREATE TABLE IF NOT EXISTS workout_plan_exercise (id TEXT PRIMARY KEY, plan_day_id TEXT NOT NULL REFERENCES workout_plan_day(id), exercise_id TEXT NOT NULL REFERENCES exercise(id), order_index INTEGER NOT NULL, target_sets INTEGER NOT NULL, target_reps_min INTEGER NOT NULL, target_reps_max INTEGER NOT NULL, target_weight_kg REAL, target_rir_min INTEGER, target_rir_max INTEGER, rest_seconds INTEGER NOT NULL, notes TEXT, progression_rule TEXT);
+CREATE TABLE IF NOT EXISTS workout_session (id TEXT PRIMARY KEY, date TEXT NOT NULL, plan_day_id TEXT REFERENCES workout_plan_day(id), status TEXT NOT NULL, start_time TEXT, end_time TEXT, duration_seconds INTEGER, overall_rpe INTEGER, energy_level INTEGER, pain_level INTEGER, session_feeling TEXT, notes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS exercise_set (id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES workout_session(id) ON DELETE CASCADE, exercise_id TEXT NOT NULL REFERENCES exercise(id), set_index INTEGER NOT NULL, weight_kg REAL, reps INTEGER NOT NULL, rir INTEGER, rpe INTEGER, tempo TEXT, range_quality INTEGER, completed INTEGER NOT NULL, notes TEXT, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS body_measurement (id TEXT PRIMARY KEY, date TEXT NOT NULL, weight_kg REAL, waist_cm REAL, chest_cm REAL, upper_arm_cm REAL, thigh_cm REAL, calf_cm REAL, body_fat_percent REAL, measurement_context TEXT NOT NULL, notes TEXT, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS body_photo (id TEXT PRIMARY KEY, date TEXT NOT NULL, view TEXT NOT NULL, file_path TEXT NOT NULL, caption TEXT, lighting_context TEXT, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS food (id TEXT PRIMARY KEY, name TEXT NOT NULL, brand TEXT, serving_name TEXT, serving_size_g REAL, calories_kcal_per_100g REAL NOT NULL, protein_g_per_100g REAL NOT NULL, carbs_g_per_100g REAL NOT NULL, fat_g_per_100g REAL NOT NULL, fiber_g_per_100g REAL, sodium_mg_per_100g REAL, source TEXT NOT NULL, notes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS meal_log (id TEXT PRIMARY KEY, date TEXT NOT NULL, meal_type TEXT NOT NULL, time TEXT, notes TEXT, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS meal_item (id TEXT PRIMARY KEY, meal_id TEXT NOT NULL REFERENCES meal_log(id) ON DELETE CASCADE, food_id TEXT NOT NULL REFERENCES food(id), amount_g REAL NOT NULL, servings REAL, calories_kcal REAL NOT NULL, protein_g REAL NOT NULL, carbs_g REAL NOT NULL, fat_g REAL NOT NULL, fiber_g REAL, notes TEXT, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS daily_log (id TEXT PRIMARY KEY, date TEXT NOT NULL UNIQUE, mood INTEGER, energy INTEGER, sleep_hours REAL, sleep_quality INTEGER, stress_level INTEGER, soreness_general INTEGER, soreness_by_muscle_json TEXT, appetite INTEGER, motivation INTEGER, free_text TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS ai_provider (id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL, base_url TEXT NOT NULL, model TEXT NOT NULL, api_key_reference TEXT, enabled INTEGER NOT NULL, is_default INTEGER NOT NULL, settings_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS generated_report (id TEXT PRIMARY KEY, report_type TEXT NOT NULL, start_date TEXT NOT NULL, end_date TEXT NOT NULL, file_path TEXT, markdown_text TEXT NOT NULL, data_snapshot_hash TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS exercise_set_session_idx ON exercise_set(session_id);
+CREATE INDEX IF NOT EXISTS exercise_set_exercise_idx ON exercise_set(exercise_id);
+CREATE INDEX IF NOT EXISTS workout_session_date_idx ON workout_session(date);
+CREATE INDEX IF NOT EXISTS body_measurement_date_idx ON body_measurement(date);
+CREATE INDEX IF NOT EXISTS meal_log_date_idx ON meal_log(date);
+CREATE INDEX IF NOT EXISTS meal_item_meal_idx ON meal_item(meal_id);
+CREATE INDEX IF NOT EXISTS food_name_idx ON food(name);
+
+`;
+
+const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
+  { version: 1, sql: INITIAL_SCHEMA_SQL },
+  { version: 2, sql: CORE_DOMAIN_SCHEMA_SQL }
+];
+
+export const CURRENT_SCHEMA_VERSION = 2;
+
+export interface DatabaseContext { database: Database.Database; path: string; }
+
+export function openDatabase(userDataPath: string): DatabaseContext {
+  const dataDirectory = join(userDataPath, 'data');
+  mkdirSync(dataDirectory, { recursive: true });
+  const path = join(dataDirectory, 'fitness.sqlite');
+  const database = new Database(path);
+  database.pragma('journal_mode = WAL');
+  database.pragma('busy_timeout = 5000');
+  database.pragma('foreign_keys = ON');
+  migrate(database);
+  return { database, path };
+}
+
+function migrate(database: Database.Database): void {
+  database.exec('CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)');
+  const appliedVersions = new Set((database.prepare('SELECT version FROM schema_migrations').all() as Array<{ version: number }>).map((row) => row.version));
+  database.transaction(() => {
+    for (const migration of MIGRATIONS) {
+      if (appliedVersions.has(migration.version)) continue;
+      database.exec(migration.sql);
+      database.prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)').run(migration.version, new Date().toISOString());
+    }
+  })();
+}
